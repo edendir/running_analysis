@@ -1,12 +1,16 @@
 import os
+import json
 import requests
+import datetime
 from dotenv import load_dotenv
+from google.cloud import storage
 
 load_dotenv()
 
 CLIENT_ID = os.getenv("STRAVA_CLIENT_ID")
 CLIENT_SECRET = os.getenv("STRAVA_CLIENT_SECRET")
 REFRESH_TOKEN = os.getenv("STRAVA_REFRESH_TOKEN")
+GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
 
 def get_access_token():
     url = "https://www.strava.com/oauth/token"
@@ -41,8 +45,18 @@ def get_runs(access_token, max_pages=5):
 
     return all_runs
 
+def save_to_gcs(data, bucket_name, prefix="raw/strava_runs"):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    now = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{prefix}/runs_{now}.json"
+    blob = bucket.blob(filename)
+    blob.upload_from_string(json.dumps(data, indent=2), content_type='application/json')
+    print(f"Data saved to {bucket_name}/{filename}")
+
 if __name__ == "__main__":
     token = get_access_token()
     runs = get_runs(token)
     for run in runs[:5]: 
         print(f"Run on {run['start_date']}: {run['distance']} meters")
+    save_to_gcs(runs, GCS_BUCKET_NAME)
