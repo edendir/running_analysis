@@ -43,7 +43,22 @@ def get_runs(access_token, max_pages=5):
         if len(activities) < 200:
             break
 
+    for run in all_runs:
+        run["streams"] = get_streams(access_token, run["id"])
+
     return all_runs
+
+def get_streams(access_token, activity_id):
+    url = f"https://www.strava.com/api/v3/activities/{activity_id}/streams"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {
+        "keys": "time,latlng,altitude,heartrate,cadence,velocity_smooth",
+        "key_by_type": "true"
+    }
+    
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    return response.json()
 
 def save_to_gcs(data, bucket_name, prefix="raw/strava_runs"):
     client = storage.Client()

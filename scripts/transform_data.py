@@ -1,11 +1,14 @@
 import os
 import json
 import datetime
+import zones
 from dotenv import load_dotenv
 from google.cloud import storage
 
+
 load_dotenv()
 GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
+zone_config = zones.load_zone_config()
 
 def get_runs_from_storage(bucket_name, prefix="raw/strava_runs"):
     client = storage.Client()
@@ -35,6 +38,9 @@ def format_pace(min_per_mi):
 def normalize_run_data(runs):
     normalized_runs = []
     for run in runs:
+        # date_str = run.get("start_date_local", "").split("T")[0]
+        # threshold_pace = zones.get_threshold(zone_config, date_str)
+        # run_zones = zones.calc_zones(threshold_pace)
         normalized_run = {
             "id": run.get("id"),
             "name": run.get("name"),
@@ -70,22 +76,64 @@ def normalize_run_data(runs):
         normalized_runs.append(normalized_run)
     return normalized_runs
 
+def normalize_run_streams(runs, zone_config):
+    records = []
+    
+    for run in runs:
+        stream_data = run.get("streams")
+        run_id = run.get("id")
+        start_time = run.get("start_date_local")
+        threshold_pace = zones.get_threshold(zone_config, start_time)
+        run_zones = zones.calc_zones(threshold_pace)
 
-def save_to_gcs(data, bucket_name, prefix="normalized/strava_runs"):
+        speed_stream = stream_data.get("velocity_smooth", {})
+        speeds = speed_stream.get("data", [])
+        time_stream = stream_data.get("time", {})
+        timestamps = time_stream.get("data", list(range(len(speeds))))
+
+        for t, speed in zip(timestamps, speeds):
+            pace_min_per_mi = 26.844 / speed if speed > 0 else None
+            pace_zone = zones.classify_pace(pace_min_per_mi, run_zones) if pace_min_per_mi else None
+            record = {
+                "run_id": run_id,
+                "timestamp": t,
+                "speed_mph": round(speed * 2.237, 2),  # convert m/s to mph
+                "pace_min_per_mi": round(pace_min_per_mi, 2) if pace_min_per_mi else None,
+                "pace_zone": pace_zone,
+            }
+            records.append(record)
+
+    return records
+
+def save_summary_to_gcs(data, bucket_name, prefix="clean/strava_runs"):
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     now = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    filename = f"{prefix}/runs_{now}.json"
+    filename = f"{prefix}/runs_summary_{now}.json"
     blob = bucket.blob(filename)
     blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
     print(f"Data saved to {bucket_name}/{filename}")
 
+def save_stream_to_gcs(data, bucket_name, prefix="clean/strava_runs"):
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    now = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    filename = f"{prefix}/runs_stream_{now}.json"
+    blob = bucket.blob(filename)
+    blob.upload_from_string(json.dumps(data, indent=2), content_type="application/json")
+    print(f"Data saved to {bucket_name}/{filename}")
 
 if __name__ == "__main__":
     runs = get_runs_from_storage(GCS_BUCKET_NAME)
+    print(f"Fetched {len(runs)} runs from GCS.")
     normalized_runs = normalize_run_data(runs)
-    for run in normalized_runs[:5]:
-        print(
-            f"Run on {run['start_date_local']}: {run['distance_miles']} miles at {run['average_pace_formatted']} min/mi"
-        )
-    save_to_gcs(normalized_runs, GCS_BUCKET_NAME)
+    print(f"Normalized {len(normalized_runs)} run summaries.")
+    normalized_streams = normalize_run_streams(runs, zone_config)
+    print(f"Normalized run streams for {len(runs)} runs.")
+    # for run in normalized_runs[:5]:
+    #     print(
+    #         f"Run on {run['start_date_local']}: {run['distance_miles']} miles at {run['average_pace_formatted']} min/mi"
+    #     )
+    save_summary_to_gcs(normalized_runs, GCS_BUCKET_NAME)
+    save_stream_to_gcs(normalized_streams, GCS_BUCKET_NAME)
+    print("Data transformation complete.")

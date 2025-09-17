@@ -1,0 +1,10 @@
+[
+  {
+    "effective_date": "2024-01-01",
+    "threshold_pace_min_per_mile": 7.2
+  },
+  {
+    "effective_date": "2025-01-01",
+    "threshold_pace_min_per_mile": 7.15
+  }
+]
